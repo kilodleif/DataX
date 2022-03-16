@@ -41,6 +41,10 @@ public class KeyConstant {
      */
     public static final String MONGO_COLLECTION_NAME = "collectionName";
     /**
+     * mongodb 需平整数组
+     */
+    public static final String MONGO_FLATTEN_ARRAY = "flattenArray";
+    /**
      * mongodb 查询条件
      */
     public static final String MONGO_QUERY = "query";

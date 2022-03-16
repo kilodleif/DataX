@@ -7,9 +7,9 @@
         "dbName": "",
         "collectionName": "",
         "column": [],
-        "upsertInfo": {
-            "isUpsert": "",
-            "upsertKey": ""
+        "writeMode": {
+            "isReplace": "",
+            "replaceKey": ""
         }
     }
 }

@@ -1,9 +1,7 @@
 package com.alibaba.datax.plugin.reader.mongodbreader;
 
-import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Date;
-import java.util.Iterator;
 import java.util.List;
 
 import com.alibaba.datax.common.element.BoolColumn;
@@ -85,6 +83,7 @@ public class MongoDBReader extends Reader {
         private String authDb = null;
         private String database = null;
         private String collection = null;
+        private String flattenArray = null;
 
         private String query = null;
 
@@ -103,7 +102,7 @@ public class MongoDBReader extends Reader {
                     MongoDBReaderErrorCode.ILLEGAL_VALUE.getDescription());
             }
             MongoDatabase db = mongoClient.getDatabase(database);
-            MongoCollection col = db.getCollection(this.collection);
+            MongoCollection<Document> col = db.getCollection(this.collection);
 
             MongoCursor<Document> dbCursor = null;
             Document filter = new Document();
@@ -120,17 +119,25 @@ public class MongoDBReader extends Reader {
                 Document queryFilter = Document.parse(query);
                 filter = new Document("$and", Arrays.asList(filter, queryFilter));
             }
-            dbCursor = col.find(filter).iterator();
+            if (!Strings.isNullOrEmpty(flattenArray)) {
+                Document matchPipeline = new Document("$match", filter);
+                Document unwindPipeline = new Document("$unwind", "$" + flattenArray);
+                dbCursor = col.aggregate(Arrays.asList(matchPipeline, unwindPipeline)).iterator();
+            } else {
+                dbCursor = col.find(filter).iterator();
+            }
+
             while (dbCursor.hasNext()) {
                 Document item = dbCursor.next();
                 Record record = recordSender.createRecord();
-                Iterator columnItera = mongodbColumnMeta.iterator();
-                while (columnItera.hasNext()) {
-                    JSONObject column = (JSONObject)columnItera.next();
-                    Object tempCol = item.get(column.getString(KeyConstant.COLUMN_NAME));
+                for (Object o : mongodbColumnMeta) {
+                    JSONObject column = (JSONObject) o;
+                    String columnName = column.getString(KeyConstant.COLUMN_NAME);
+                    String columnType = column.getString(KeyConstant.COLUMN_TYPE);
+                    Object tempCol = item.get(columnName);
                     if (tempCol == null) {
-                        if (KeyConstant.isDocumentType(column.getString(KeyConstant.COLUMN_TYPE))) {
-                            String[] name = column.getString(KeyConstant.COLUMN_NAME).split("\\.");
+                        if (KeyConstant.isDocumentType(columnType)) {
+                            String[] name = columnName.split("\\.");
                             if (name.length > 1) {
                                 Object obj;
                                 Document nestedDocument = item;
@@ -140,18 +147,16 @@ public class MongoDBReader extends Reader {
                                         nestedDocument = (Document) obj;
                                     }
                                 }
-
-                                if (null != nestedDocument) {
-                                    Document doc = nestedDocument;
-                                    tempCol = doc.get(name[name.length - 1]);
-                                }
+                                Document doc = nestedDocument;
+                                tempCol = doc.get(name[name.length - 1]);
                             }
+
                         }
                     }
                     if (tempCol == null) {
                         //continue; 这个不能直接continue会导致record到目的端错位
                         record.addColumn(new StringColumn(null));
-                    }else if (tempCol instanceof Double) {
+                    } else if (tempCol instanceof Double) {
                         //TODO deal with Double.isNaN()
                         record.addColumn(new DoubleColumn((Double) tempCol));
                     } else if (tempCol instanceof Boolean) {
@@ -160,16 +165,16 @@ public class MongoDBReader extends Reader {
                         record.addColumn(new DateColumn((Date) tempCol));
                     } else if (tempCol instanceof Integer) {
                         record.addColumn(new LongColumn((Integer) tempCol));
-                    }else if (tempCol instanceof Long) {
+                    } else if (tempCol instanceof Long) {
                         record.addColumn(new LongColumn((Long) tempCol));
                     } else {
-                        if(KeyConstant.isArrayType(column.getString(KeyConstant.COLUMN_TYPE))) {
+                        if (KeyConstant.isArrayType(columnType)) {
                             String splitter = column.getString(KeyConstant.COLUMN_SPLITTER);
-                            if(Strings.isNullOrEmpty(splitter)) {
+                            if (Strings.isNullOrEmpty(splitter)) {
                                 throw DataXException.asDataXException(MongoDBReaderErrorCode.ILLEGAL_VALUE,
-                                    MongoDBReaderErrorCode.ILLEGAL_VALUE.getDescription());
+                                        MongoDBReaderErrorCode.ILLEGAL_VALUE.getDescription());
                             } else {
-                                ArrayList array = (ArrayList)tempCol;
+                                List array = (List) tempCol;
                                 String tempArrayStr = Joiner.on(splitter).join(array);
                                 record.addColumn(new StringColumn(tempArrayStr));
                             }
@@ -196,6 +201,7 @@ public class MongoDBReader extends Reader {
             }
 
             this.collection = readerSliceConfig.getString(KeyConstant.MONGO_COLLECTION_NAME);
+            this.flattenArray = readerSliceConfig.getString(KeyConstant.MONGO_FLATTEN_ARRAY);
             this.query = readerSliceConfig.getString(KeyConstant.MONGO_QUERY);
             this.mongodbColumnMeta = JSON.parseArray(readerSliceConfig.getString(KeyConstant.MONGO_COLUMN));
             this.lowerBound = readerSliceConfig.get(KeyConstant.LOWER_BOUND);
